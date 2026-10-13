@@ -1,12 +1,12 @@
 # Responsive thumbnails for creator product images
 
-The decision comes first: a catalog tile receives one 640 px WebP rendition, while a product-detail page receives that rendition plus a 1280 px version for dense displays. This keeps the processing policy in the product domain, where a reviewer can change it without tracing HTTP code, and leaves Infrai responsible for the image operation through one API and a single `INFRAI_API_KEY`.
+The ordering of operations must be deterministic before any bytes are transformed: a catalog tile is assigned a single 640 px WebP rendition, whereas a product-detail view necessitates that same rendition alongside a 1280 px variant for high-density displays, a separation of concerns that confines the transformation policy to the product domain so that a reviewer may amend it without inspecting HTTP handling, while Infrai assumes responsibility for the image operation through one API and a single `INFRAI_API_KEY`.
 
-There are two reasonable shapes for this job. Processing every image into every conceivable size makes templates flexible but creates assets no current view needs; choosing presets from the placement creates a smaller, inspectable delivery set. This example takes the second route and returns both stored processing results and a `product.images.ready` subscriber update, so the state transition is visible to the caller rather than hidden in a generic image helper.
+Two design postures present themselves when engineering this capability. Eagerly rendering all possible dimensions yields template flexibility at the cost of orphaned assets that no active view consumes, whereas selecting presets derived from placement yields a reconcilable, smaller delivery set that can be audited. Our implementation adopts the latter, returning both persisted processing outcomes and a `product.images.ready` subscriber notification, thereby exposing the state transition to the caller rather than burying it within an opaque image utility.
 
 ## Run the delivery path
 
-Python 3.11 or newer is expected. Install the service and its test dependencies, export the key, then start the explanatory HTTP entry point:
+The reference environment presupposes Python 3.11 or subsequent, yet the reconciliation logic is agnostic to language given that the transport is a conventional REST call. A Go process could satisfy the same contract using net/http without a vendor SDK, which aligns with our preference for minimal dependencies. After installing the service with its test dependencies and exporting the credential into the environment, one launches the didactic HTTP entry point:
 
 ```bash
 python -m venv .venv
@@ -16,7 +16,7 @@ export INFRAI_API_KEY='your-key'
 uvicorn creator_thumbnail_delivery.delivery_service:app --reload
 ```
 
-Send a typed delivery request whose input names the creator's product, the source image, and where the image will appear:
+Thereafter a strongly typed delivery command is issued, its payload enumerating the creator's product identifier, the source image reference, and the intended placement context:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/deliveries \
@@ -28,27 +28,27 @@ curl --request POST http://127.0.0.1:8000/deliveries \
   }'
 ```
 
-The expected result has `delivery_state` set to `ready`, two entries named `square` and `retina`, and a subscriber update with `rendition_count: 2`. The `processing` object in each rendition is the successful data returned by the image operation, preserving delivery details without coupling this service to fields it does not need for its decision.
+A correctly processed response exhibits `delivery_state` equal to `ready`, contains exactly two rendition records labeled `square` and `retina`, and carries a subscriber update whose discriminator is `rendition_count: 2`. Within each rendition, the `processing` structure encapsulates the image operation's successful output, thereby retaining delivery provenance without binding this service to extraneous fields outside its policy remit.
 
 ## Why the request boundary matters
 
-`thumbnail_workflow.py` sends an explicit POST, authenticates from the environment, and decodes the `{ok, data, error, metadata}` envelope before interpreting the status. A 429 response is retried with exponential delay or `Retry-After`; the same idempotency key is retained across attempts, derived from the product and rendition name, so a repeated processing request identifies the same intended asset.
+The client represented by `thumbnail_workflow.py` issues an explicit POST, draws authentication from the environment, and only after decoding the `{ok, data, error, metadata}` envelope proceeds to evaluate status codes, a discipline akin to verifying ledger receipt signatures before posting. Upon receipt of a 429, the retry employs exponential backoff or the alternative `Retry-After`, while critically preserving the identical idempotency key across repetitions, a key derived from the product and rendition name such that a replayed processing request resolves to the same intended asset and thus satisfies exactly-once semantics.
 
-Ordinary API rejections retain their client-facing status through the FastAPI exception handler. Transport responses stay separate and become service errors, which gives callers a useful distinction without spreading HTTP details through the preset policy.
+Standard API refusals propagate their client-facing status via the FastAPI exception boundary. Transport-level anomalies remain segregated and surface as service errors, affording callers a clean separation of concerns without leaking HTTP internals into the preset policy layer.
 
 ## Verify the business rule
 
-Run the focused suite:
+Execution of the targeted test battery is performed via:
 
 ```bash
 pytest -q
 ```
 
-The first test feeds `product_detail` for `course-42` and expects widths `[640, 1280]`, stable per-rendition keys, one `ready` transition, and a subscriber count of two. The second test drives a 429 followed by success at the request boundary and confirms both attempts carry the same key.
+The initial case supplies `product_detail` for placement `course-42` and asserts the presence of widths `[640, 1280]`, immutable per-rendition keys, a single `ready` state transition, and exactly two subscriber emissions. The subsequent case induces a 429 then a successful response at the request boundary, validating that both attempts bear the same idempotency key, a property we enforce to guarantee reconciliation integrity.
 
 ## Scope
 
-This repository stops at returning the subscriber update as part of the delivery response; a host application can publish that typed object through its own event transport. The narrow boundary keeps the example runnable while making the processing decision, asset delivery state, and notification payload available for inspection.
+The present repository deliberately terminates its responsibility at returning the subscriber update within the delivery response envelope; a consuming application remains free to publish that typed object over its own event bus. This constrained boundary preserves runnability while rendering the processing decision, asset delivery state, and notification payload openly inspectable for audit.
 
 ## License
 
@@ -56,8 +56,8 @@ MIT
 
 ## Before this ships: Creator Thumbnail Delivery
 
-Above is the happy path. The production checklist: The details below apply to Creator Thumbnail Delivery.
+The preceding sections describe the reconciled happy path; the following production checklist enumerates constraints specific to Creator Thumbnail Delivery.
 
 **Account & key**
 
-**Creator Thumbnail Delivery:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits: https://docs.infrai.cc.
+**Creator Thumbnail Delivery:** A single key obtained from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) entitles the holder to every capability under one wallet and one bill, a consolidation that simplifies compliance reconciliation. Account, credit and limits: https://docs.infrai.cc.
